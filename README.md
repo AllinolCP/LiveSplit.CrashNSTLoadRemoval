@@ -15,6 +15,7 @@ If you want to
 
 # Special Thanks
 Special thanks go to McCrodi from the Crash Speedrunning Discord, who helped me by providing 1080p/720p captured data and general feedback regarding the functionality.
+Special thanks also goes to [Crash Helper](https://github.com/ascooke/Crash.Helper/) for the memory reading code.
 
 # How does it work?
 The method works by taking a small "screenshot" (currently 300x100) from your selected capture at the center, where "LOADING" is displayed when playing the Crash NST. It then cuts this 300x100 image into patches (currently of size 50x50). From these patches, a color histogram is computed (currently using 16 histogram bins -> [0-15, 16-31, 32-47, ..., 240-255]) of the red, green and blue color channels. These histograms are put into a large vector, which describes our image (feature vector).
