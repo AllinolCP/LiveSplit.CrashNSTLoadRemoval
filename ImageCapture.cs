@@ -209,16 +209,9 @@ namespace CrashNSaneLoadDetector
 					rc.Width = (int)(info.crop_coordinate_right - info.crop_coordinate_left);
 					rc.Height = (int)(info.crop_coordinate_bottom - info.crop_coordinate_top);
 				}
-				
-
-				
 
 				//Compute crop coordinates and width/ height based on resoution
 				ImageCapture.SizeAdjustedCropAndOffset(rc.Width, rc.Height, ref info);
-
-
-				
-				
 
 				float cropOffsetX = info.actual_offset_x;
 				float cropOffsetY = info.actual_offset_y;

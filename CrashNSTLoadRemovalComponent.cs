@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Drawing;
 using CrashNSaneLoadDetector;
 using System.IO;
+using CrashNSTLoadRemoval.Memory;
 //using System.Threading;
 
 namespace LiveSplit.UI.Components
@@ -28,6 +29,7 @@ namespace LiveSplit.UI.Components
 
     public CrashNSTLoadRemovalSettings settings { get; set; }
 
+    private bool wasLoading = false;
     private bool isLoading = false;
     private bool isTransition = false;
     private int matchingBins = 0;
@@ -49,6 +51,7 @@ namespace LiveSplit.UI.Components
     }
 
     private CrashNSTState NSTState = CrashNSTState.RUNNING;
+    private CrashMemory memory;
     private int runningFrames = 0;
     private int pausedFrames = 0;
     private int pausedFramesSegment = 0;
@@ -94,7 +97,8 @@ namespace LiveSplit.UI.Components
       NumberOfLoadsPerSplit = new List<int>();
       InitNumberOfLoadsFromState();
 
-      settings = new CrashNSTLoadRemovalSettings(state);
+      memory = new CrashMemory();
+      settings = new CrashNSTLoadRemovalSettings(memory, state);
       lastTime = DateTime.Now;
       segmentTimeStart = DateTime.Now;
       timer = new TimerModel { CurrentState = state };
@@ -105,11 +109,16 @@ namespace LiveSplit.UI.Components
       timer.CurrentState.OnUndoSplit += timer_OnUndoSplit;
       timer.CurrentState.OnPause += timer_OnPause;
       timer.CurrentState.OnResume += timer_OnResume;
-      //highResTimer = new HighResolutionTimer.HighResolutionTimer(16.0f);
-      //highResTimer.Elapsed += (s, e) => { CaptureLoads(); };
+            memory.Loading.OnValueChange += Crash_OnLoadingChanged;
     }
 
-    private void timer_OnResume(object sender, EventArgs e)
+        private void Crash_OnLoadingChanged(int oldLoading, int newLoading)
+        {
+            wasLoading = oldLoading == 1;
+            isLoading = newLoading == 1;
+        }
+
+        private void timer_OnResume(object sender, EventArgs e)
     {
       timerStarted = true;
     }
@@ -162,168 +171,14 @@ namespace LiveSplit.UI.Components
           //Console.WriteLine("TIME DIFF START: {0}", DateTime.Now - lastTime);
           lastTime = DateTime.Now;
 
-          //Capture image using the settings defined for the component
-          Bitmap capture = settings.CaptureImage();
-          List<int> max_per_patch;
-          //Feed the image to the feature detection
-          int black_level = 0;
-          var features = FeatureDetector.featuresFromBitmap(capture, out max_per_patch, out black_level);
-          int tempMatchingBins = 0;
-          bool wasLoading = isLoading;
-          bool wasTransition = isTransition;
 
-          //TODO: should we "learn" the black level automatically? we could do this during the first few transitions, by keeping track of the minimum histogram values, and dynamically adjusting the number of black bins?
-
-          try
-          {
-            isLoading = FeatureDetector.compareFeatureVector(features.ToArray(), FeatureDetector.listOfFeatureVectorsEng, out tempMatchingBins, -1.0f, false);
-          }
-          catch (Exception ex)
-          {
-            isLoading = false;
-            Console.WriteLine("Error: " + ex.ToString());
-            throw ex;
-          }
+          settings.LoadingState.Text = "Loading: " + isLoading.ToString();
 
 
-         /* if (isLoading && num_transitions < num_transitions_for_calibration)
-          {
-            num_transitions++;
-            sum_transitions_max_level += black_level;
-            average_transition_max_level = sum_transitions_max_level / num_transitions;
-            max_transition_max_level = Math.Max(black_level, max_transition_max_level);
-            Console.WriteLine("pre-load black-level: Average transition {5}: num: {0}, sum: {1}, last: {2}, avg: {3}, max: {4}", num_transitions, sum_transitions_max_level, last_transition_max_level, average_transition_max_level, max_transition_max_level, SplitNames[Math.Max(Math.Min(liveSplitState.CurrentSplitIndex, SplitNames.Count - 1), 0)]);
-            last_transition_max_level = 0.0f;
-          }*/
+                    //Capture image using the settings defined for the component
 
-
-          matchingBins = tempMatchingBins;
-
-          timer.CurrentState.IsGameTimePaused = isLoading;
-
-          if (settings.RemoveFadeins || settings.RemoveFadeouts)
-          {
-            float new_avg_transition_max = 0.0f;
-            try
-            {
-              if (num_transitions >= num_transitions_for_calibration)
-              {
-                isTransition = FeatureDetector.compareFeatureVectorTransition(features.ToArray(), FeatureDetector.listOfFeatureVectorsEng, max_per_patch, average_transition_max_level, out new_avg_transition_max, out tempMatchingBins, 0.8f, false);//FeatureDetector.isGameTransition(capture, 30);
-              }
-              else
-              {
-                isTransition = FeatureDetector.compareFeatureVectorTransition(features.ToArray(), FeatureDetector.listOfFeatureVectorsEng, max_per_patch, -1.0f, out new_avg_transition_max, out tempMatchingBins, 0.8f, false);//FeatureDetector.isGameTransition(capture, 30);
-              }
-            }
-            catch (Exception ex)
-            {
-              isTransition = false;
-              Console.WriteLine("Error: " + ex.ToString());
-              throw ex;
-            }
-            //Console.WriteLine("Transition: {0}", isTransition);
-            if (wasLoading && isTransition && settings.RemoveFadeins)
-            {
-              postLoadTransition = true;
-              transitionStart = DateTime.Now;
-            }
-
-            if (wasTransition == false && isTransition && settings.RemoveFadeouts)
-            {
-              //This could be a pre-load transition, start timing it
-              transitionStart = DateTime.Now;
-            }
-
-
-            //Console.WriteLine("GAMETIMEPAUSETIME: {0}", timer.CurrentState.GameTimePauseTime);
-
-            if (!isLoading)
-            {
-              last_transition_max_level = new_avg_transition_max;
-            }
-            else if(settings.RemoveFadeins)
-            {
-              first_frame_post_load_transition = false;
-            }
-
-            if(!wasLoading && isLoading)
-            {
-              num_transitions++;
-              sum_transitions_max_level += last_transition_max_level;
-              average_transition_max_level = sum_transitions_max_level / num_transitions;
-              max_transition_max_level = Math.Max(last_transition_max_level, max_transition_max_level);
-              Console.WriteLine("pre-load black-level: Average transition {5}: num: {0}, sum: {1}, last: {2}, avg: {3}, max: {4}", num_transitions, sum_transitions_max_level, last_transition_max_level, average_transition_max_level, max_transition_max_level, SplitNames[Math.Max(Math.Min(liveSplitState.CurrentSplitIndex, SplitNames.Count - 1), 0)]);
-              last_transition_max_level = 0.0f;
-              settings.SetBlackLevel(Convert.ToInt32(average_transition_max_level));
-            }
-
-            if (wasTransition && isLoading)
-            {
-              // This was a pre-load transition, subtract the gametime
-              TimeSpan delta = (DateTime.Now - transitionStart);
-
-              if(settings.RemoveFadeouts)
-              {
-                if (delta.TotalSeconds > numSecondsTransitionMax)
-                {
-                  Console.WriteLine("{2}: Transition longer than {0} seconds, doesn't count! (Took {1} seconds)", numSecondsTransitionMax, delta.TotalSeconds, SplitNames[Math.Max(Math.Min(liveSplitState.CurrentSplitIndex, SplitNames.Count - 1), 0)]);
-                }
-                else
-                {
-                  timer.CurrentState.SetGameTime(timer.CurrentState.GameTimePauseTime - delta);
-
-                  total_paused_time += delta.TotalSeconds;
-                  Console.WriteLine("PRE-LOAD TRANSITION {2} seconds: {0}, totalPausedTime: {1}", delta.TotalSeconds, total_paused_time, SplitNames[Math.Max(Math.Min(liveSplitState.CurrentSplitIndex, SplitNames.Count - 1), 0)]);
-                }
-
-              }
-              
-            }
-
-            if(settings.RemoveFadeins)
-            {
-              if (postLoadTransition && isTransition == false)
-              {
-                TimeSpan delta = (DateTime.Now - transitionStart);
-
-                total_paused_time += delta.TotalSeconds;
-                Console.WriteLine("POST-LOAD TRANSITION {2} seconds: {0}, totalPausedTime: {1}", delta.TotalSeconds, total_paused_time, SplitNames[Math.Max(Math.Min(liveSplitState.CurrentSplitIndex, SplitNames.Count - 1), 0)]);
-              }
-
-              if(wasLoading && !isLoading && isTransition)
-              {
-
-               if (first_frame_post_load_transition == false)
-                {
-                  num_transitions++;
-                  sum_transitions_max_level += last_transition_max_level;
-                  average_transition_max_level = sum_transitions_max_level / num_transitions;
-                  max_transition_max_level = Math.Max(last_transition_max_level, max_transition_max_level);
-                  Console.WriteLine("post-load black-level: Average transition {5}: num: {0}, sum: {1}, last: {2}, avg: {3}, max: {4}", num_transitions, sum_transitions_max_level, last_transition_max_level, average_transition_max_level, max_transition_max_level, SplitNames[Math.Max(Math.Min(liveSplitState.CurrentSplitIndex, SplitNames.Count - 1), 0)]);
-                  last_transition_max_level = 0.0f;
-                  first_frame_post_load_transition = true;
-                  settings.SetBlackLevel(Convert.ToInt32(average_transition_max_level));
-                }
-
-              }
-
-              if (postLoadTransition == true && isTransition)
-              {
-                // We are transitioning after a load screen, this stops the timer, and actually increases the load time
-                timer.CurrentState.IsGameTimePaused = true;
-
-
-              }
-              else
-              {
-                postLoadTransition = false;
-              }
-
-            }
-
-          }
-
-
+          
+          liveSplitState.IsGameTimePaused = isLoading;
 
           if (isLoading && !wasLoading)
           {
@@ -608,20 +463,21 @@ namespace LiveSplit.UI.Components
 
         ReloadLogFile();
       }
+            settings.hookStatus.Text = "Status: " + (memory.ProcessHooked ? "Hooked" : "Not Hooked");
       liveSplitState = state;
-      /*
-			liveSplitState = state;
-			if (GameName != state.Run.GameName || GameCategory != state.Run.CategoryName)
-			{
-				//Reload settings for different game or category
-				GameName = state.Run.GameName;
-				GameCategory = state.Run.CategoryName;
+            /*
+                  liveSplitState = state;
+                  if (GameName != state.Run.GameName || GameCategory != state.Run.CategoryName)
+                  {
+                      //Reload settings for different game or category
+                      GameName = state.Run.GameName;
+                      GameCategory = state.Run.CategoryName;
 
-				settings.ChangeAutoSplitSettingsToGameName(GameName, GameCategory);
-			}
-			*/
+                      settings.ChangeAutoSplitSettingsToGameName(GameName, GameCategory);
+                  }
+                  */
 
-
+            memory.Refresh();
 
       CaptureLoads();
 
